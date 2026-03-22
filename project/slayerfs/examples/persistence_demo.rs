@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Create a wrapper that can be shared between VFS and GC
-        let block_store_for_gc: Arc<dyn slayerfs::chuck::BlockStore + Send + Sync> =
+        let block_store_for_gc: Arc<dyn slayerfs::chunk::BlockStore + Send + Sync> =
             Arc::new(ObjectBlockStore::new(client.clone()));
 
         let fs = VFS::new(layout, store, meta_store.clone())

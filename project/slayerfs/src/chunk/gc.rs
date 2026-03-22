@@ -1,4 +1,4 @@
-use crate::chuck::store::{BlockKey, BlockStore};
+use crate::chunk::store::{BlockKey, BlockStore};
 use crate::meta::store::{MetaError, MetaStore};
 use std::sync::Arc;
 use std::time::Duration;

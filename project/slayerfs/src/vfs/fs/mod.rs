@@ -1,8 +1,7 @@
 //! FUSE/SDK-friendly VFS with path-based metadata ops and handle-based IO.
 
-use crate::chuck::chunk::ChunkLayout;
-use crate::chuck::store::BlockStore;
-use crate::chuck::{BlockGcConfig, CompactionWorker, CompactionWorkerConfig};
+use crate::chunk::store::BlockStore;
+use crate::chunk::{BlockGcConfig, ChunkLayout, CompactionWorker, CompactionWorkerConfig};
 use crate::meta::MetaLayer;
 use crate::meta::client::MetaClient;
 use crate::meta::config::MetaClientConfig;

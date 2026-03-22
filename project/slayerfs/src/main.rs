@@ -298,6 +298,7 @@ async fn create_meta_store(args: &MountConfig) -> anyhow::Result<Arc<dyn MetaSto
         }
         MetaBackendKind::Redis => {
             let client = ClientOptions::default();
+            let compact = CompactConfig::default();
 
             let config = Config {
                 database: DatabaseConfig {
@@ -307,6 +308,7 @@ async fn create_meta_store(args: &MountConfig) -> anyhow::Result<Arc<dyn MetaSto
                 },
                 cache: CacheConfig::default(),
                 client,
+                compact,
             };
             let handle = MetaStoreFactory::<RedisMetaStore>::create_from_config(config).await?;
             Ok(handle.store() as Arc<dyn MetaStore>)

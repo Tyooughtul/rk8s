@@ -1,5 +1,5 @@
 //! Compactor: coordinates MetaStore and BlockStore to compact chunk slices.
-use crate::chuck::{
+use crate::chunk::{
     ChunkLayout,
     slice::{SliceDesc, SliceOffset, block_span_iter_chunk, block_span_iter_slice},
     store::{BlockKey, BlockStore},

@@ -1,10 +1,10 @@
 //! Background workers (upload, gc)
 //!
-//! Note: Background compaction is handled by `chuck::compaction_worker::CompactionWorker`.
+//! Note: Background compaction is handled by `chunk::compaction_worker::CompactionWorker`.
 
 use crate::cadapter::client::{ObjectBackend, ObjectClient};
-use crate::chuck::ChunkLayout;
-use crate::chuck::store::BlockStore;
+use crate::chunk::ChunkLayout;
+use crate::chunk::store::BlockStore;
 use crate::meta::store::MetaStore;
 use std::sync::Arc;
 use std::time::Duration;

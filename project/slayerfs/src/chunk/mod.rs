@@ -15,10 +15,10 @@
 #![allow(unused_imports)]
 
 pub mod cache;
-pub mod chunk;
 pub mod compaction_worker;
 pub mod compactor;
 pub mod gc;
+pub mod layout;
 pub mod reader;
 pub mod singleflight;
 pub mod slice;

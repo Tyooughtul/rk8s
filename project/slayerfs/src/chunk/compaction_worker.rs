@@ -1,4 +1,4 @@
-use crate::chuck::{BlockGcConfig, BlockStoreGC, CompactResult, Compactor};
+use crate::chunk::{BlockGcConfig, BlockStoreGC, BlockStore, CompactResult, Compactor};
 use crate::meta::config::LockTtlConfig;
 use crate::meta::store::{LockName, MetaStore};
 use std::collections::HashSet;
@@ -166,7 +166,7 @@ where
 impl<M, B> CompactionWorker<M, B>
 where
     M: MetaStore + Send + Sync + 'static,
-    B: crate::chuck::BlockStore + Send + Sync + 'static,
+    B: BlockStore + Send + Sync + 'static,
 {
     pub fn new(meta_store: Arc<M>, block_store: Arc<B>) -> Self {
         let meta_store_dyn: Arc<dyn MetaStore> = meta_store.clone();
@@ -223,7 +223,7 @@ async fn run_compaction_cycle<M, B>(
 ) -> anyhow::Result<()>
 where
     M: MetaStore + Send + Sync + 'static,
-    B: crate::chuck::BlockStore + Send + Sync + 'static,
+    B: BlockStore + Send + Sync + 'static,
 {
     let chunk_ids = meta_store
         .list_chunk_ids(config.max_chunks_per_run)
