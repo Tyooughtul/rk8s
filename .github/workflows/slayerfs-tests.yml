@@ -23,6 +23,10 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTUP_TOOLCHAIN: stable
+      LIBGUESTFS_BACKEND: direct
+      LIBGUESTFS_DEBUG: 1
+      LIBGUESTFS_TRACE: 1
+      LIBVIRT_DEFAULT_URI: qemu:///system
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,9 +43,33 @@ jobs:
             protobuf-compiler \
             qemu-system-x86 \
             qemu-utils \
+            libvirt-daemon-system \
+            libvirt-daemon-driver-qemu \
             libvirt-clients \
+            dnsmasq-base \
             guestfish \
+            libguestfs-tools \
+            supermin \
             xorriso
+
+      - name: Prepare hosted virtualization environment (test/*)
+        if: ${{ startsWith(github.ref, 'refs/heads/test/') }}
+        run: |
+          KREL="$(uname -r)"
+          sudo chmod a+r "/boot/vmlinuz-${KREL}" || true
+          sudo chmod a+r /boot/vmlinuz-* || true
+          echo "SUPERMIN_KERNEL=/boot/vmlinuz-${KREL}" >> "$GITHUB_ENV"
+          echo "SUPERMIN_MODULES=/lib/modules/${KREL}" >> "$GITHUB_ENV"
+
+          sudo systemctl enable --now libvirtd || sudo service libvirtd start
+          sudo systemctl enable --now virtlogd || sudo service virtlogd start || true
+          echo "/usr/sbin" >> "$GITHUB_PATH"
+          sudo chgrp "$(id -gn)" /var/run/libvirt/libvirt-sock || true
+          sudo chmod g+rw /var/run/libvirt/libvirt-sock || true
+          which dnsmasq || true
+          dnsmasq --version | head -n 1 || true
+          virsh -c qemu:///system uri
+          virsh -c qemu:///system net-list --all || true
 
       - name: Start backend services
         run: |
