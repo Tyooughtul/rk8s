@@ -1,62 +1,223 @@
 name: slayerfs tests
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "project/slayerfs/**"
       - "project/rfuse3/**"
       - "project/Cargo.toml"
       - "project/Cargo.lock"
+      - ".github/workflows/slayerfs-tests.yml"
   push:
     branches:
       - main
+      - test/**
     paths:
       - "project/slayerfs/**"
       - "project/rfuse3/**"
       - "project/Cargo.toml"
       - "project/Cargo.lock"
+      - ".github/workflows/slayerfs-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slayerfs-tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   unit-and-integration:
     name: slayerfs basic test
-    runs-on: [self-hosted]
+    runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
       RUSTUP_TOOLCHAIN: stable
+      LIBGUESTFS_BACKEND: direct
+      LIBVIRT_DEFAULT_URI: qemu:///system
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: project
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
             fuse3 \
+            libfuse3-dev \
             pkg-config \
             libssl-dev \
             protobuf-compiler \
             qemu-system-x86 \
+            qemu-kvm \
             qemu-utils \
             libvirt-clients \
+            libvirt-daemon-system \
+            libvirt-daemon-driver-qemu \
+            libvirt-daemon-config-network \
+            dnsmasq-base \
+            bridge-utils \
+            libguestfs-tools \
             guestfish \
+            supermin \
             xorriso
+
+          # Package names can differ across Ubuntu runner images.
+          # Install optional libvirt split packages only when available.
+          optional_pkgs=(
+            libvirt-daemon-driver-network
+            libvirt-daemon-driver-nwfilter
+          )
+          for pkg in "${optional_pkgs[@]}"; do
+            if apt-cache show "$pkg" >/dev/null 2>&1; then
+              sudo apt-get install -y --no-install-recommends "$pkg"
+            else
+              echo "optional package not available on this image: $pkg"
+            fi
+          done
+
+          # Allow qemu-bridge-helper to use any bridge (required by qlean)
+          sudo mkdir -p /etc/qemu
+          echo "allow all" | sudo tee /etc/qemu/bridge.conf >/dev/null
+          sudo chmod 644 /etc/qemu/bridge.conf
+          sudo chmod u+s /usr/lib/qemu/qemu-bridge-helper
+
+      - name: Start and verify libvirt
+        run: |
+          set -euo pipefail
+          sudo systemctl enable --now libvirtd
+          sudo systemctl enable --now virtlogd
+
+          for i in $(seq 1 20); do
+            if [ -S /var/run/libvirt/libvirt-sock ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          sudo test -S /var/run/libvirt/libvirt-sock
+          sudo chmod a+rw /var/run/libvirt/libvirt-sock
+          sudo chmod a+rw /var/run/libvirt/libvirt-sock-ro || true
+
+          if ! sudo virsh -c qemu:///system net-info default >/dev/null 2>&1; then
+            sudo virsh -c qemu:///system net-define /usr/share/libvirt/networks/default.xml
+          fi
+          sudo virsh -c qemu:///system net-autostart default
+          sudo virsh -c qemu:///system net-start default || true
+
+          echo "=== libvirt diagnostics ==="
+          id
+          ls -l /var/run/libvirt || true
+          sudo systemctl --no-pager --full status libvirtd || true
+          sudo virsh -c qemu:///system uri
+          sudo virsh -c qemu:///system version
+          sudo virsh -c qemu:///system net-list --all
+          sudo virsh -c qemu:///system list --all
+
+      - name: Verify libguestfs/supermin setup
+        run: |
+          set -euo pipefail
+          KERNEL_PATH="/boot/vmlinuz-$(uname -r)"
+          echo "kernel path: ${KERNEL_PATH}"
+          ls -l "${KERNEL_PATH}" || true
+
+          # On GitHub-hosted Ubuntu runners, /boot/vmlinuz-* can be root-only.
+          # supermin copies this kernel as the non-root runner user, so make it readable.
+          sudo test -r "${KERNEL_PATH}"
+          sudo chmod a+r "${KERNEL_PATH}"
+          ls -l "${KERNEL_PATH}"
+
+          guestfish --version
+          supermin --version
+          libguestfs-test-tool
 
       - name: Start backend services
         run: |
           docker compose -f project/slayerfs/docker-compose.yml up -d
+          for svc in etcd-slayerfs-test redis-slayerfs-test pgsql-slayerfs-test; do
+            echo "waiting for ${svc} to be healthy"
+            for i in $(seq 1 60); do
+              status=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}unknown{{end}}' "${svc}" 2>/dev/null || true)
+              if [ "${status}" = "healthy" ]; then
+                echo "${svc} is healthy"
+                break
+              fi
+              if [ "${i}" -eq 60 ]; then
+                echo "${svc} failed to become healthy"
+                docker ps -a
+                docker logs "${svc}" || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Grant vhost-vsock permissions
+        run: |
+          sudo modprobe vhost_vsock || true
+          echo 'KERNEL=="vhost-vsock", MODE="0666"' | sudo tee /etc/udev/rules.d/99-vhost-vsock.rules >/dev/null
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=vhost-vsock || true
+          sudo chmod 666 /dev/vhost-vsock || true
+          ls -l /dev/vhost-vsock || true
+
+      - name: Add runner to kvm group
+        run: |
+          sudo usermod -aG kvm "$USER"
+
+      - name: Disable AppArmor for QEMU
+        run: |
+          # GitHub-hosted Ubuntu runners enforce AppArmor by default,
+          # which blocks nested QEMU from opening /dev/vhost-vsock.
+          sudo ln -s /etc/apparmor.d/usr.bin.qemu-system-x86_64 /etc/apparmor.d/disable/ 2>/dev/null || true
+          sudo apparmor_parser -R /etc/apparmor.d/usr.bin.qemu-system-x86_64 2>/dev/null || true
+          sudo aa-status -- Complain /usr/bin/qemu-system-x86_64 2>/dev/null || true
 
       - name: Run tests
         run: |
-          cd project
-          cargo build -p slayerfs --example persistence_demo --release
-          cargo test -p slayerfs --test test_slayerfs_qlean_multinode_smoke -- --ignored
+          sg kvm -c "bash -c '
+            set -euo pipefail
+            cd project
+            export LIBGUESTFS_DEBUG=1
+            export LIBGUESTFS_TRACE=1
+            export LIBVIRT_DEFAULT_URI=qemu:///system
+            export RUST_BACKTRACE=1
+            # Keep vhost_vsock module loaded so /dev/vhost-vsock does not get recreated with default permissions
+            exec 3<>/dev/vhost-vsock || true
+            cargo build -p slayerfs --example persistence_demo --release
+            cargo test -p slayerfs --test test_slayerfs_qlean_multinode_smoke -- --ignored
+          '"
 
       - name: Stop backend services
         if: always()
         run: |
           docker compose -f project/slayerfs/docker-compose.yml down -v
+
+      - name: Dump virtualization diagnostics (always)
+        if: always()
+        run: |
+          set +e
+          echo "=== libvirt journal (last 300 lines) ==="
+          sudo journalctl -u libvirtd -n 300 --no-pager || true
+          echo "=== virtlogd journal (last 200 lines) ==="
+          sudo journalctl -u virtlogd -n 200 --no-pager || true
+          echo "=== virsh networks ==="
+          sudo virsh -c qemu:///system net-list --all || true
+          echo "=== virsh domains ==="
+          sudo virsh -c qemu:///system list --all || true
+          echo "=== qemu processes ==="
+          ps -ef | grep -E 'qemu|libvirtd' | grep -v grep || true
 
       - name: Install nightly toolchain and cargo-fuzz
         run: |
